@@ -1,17 +1,21 @@
-/** app.js (UMD + Babel-standalone compatible, no imports) */
-/** Assumes React 18 UMD + ReactDOM UMD + Babel standalone are loaded via index.html */
+/** app.js (UMD + Babel-standalone compatible, no imports)
+ *  - Works with index.html that loads React/ReactDOM UMD + babel-standalone + Tailwind CDN
+ *  - Supports Wire and D-Ring (two-nail) mounting, hangerOffset, unit toggle
+ *  - Fixes mountingType select by not coercing string fields to numbers
+ */
 
 const { useState } = React;
 
-/* Inline Lucide-style icons (small, no external deps) */
+/* Minimal inline icons (no external deps) */
 const Calculator = (props) => (
-  <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
-       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+       viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round">
     <rect width="16" height="20" x="4" y="2" rx="2"/>
     <line x1="8" x2="16" y1="6" y2="6"/>
     <line x1="16" x2="16" y1="14" y2="14"/>
     <path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/>
-    <path d="M12 14h.01"/><path d="M8 14h.01"/>
+    <path d="12 14h.01"/><path d="M8 14h.01"/>
     <path d="M12 18h.01"/><path d="M8 18h.01"/>
   </svg>
 );
@@ -32,6 +36,15 @@ const Trash2 = (props) => (
   </svg>
 );
 
+const NUM_FIELDS = new Set([
+  'width',
+  'height',
+  'wireOffset',
+  'mountingVerticalOffset',
+  'mountingHorizontalOffset',
+  'hangerOffset',
+]);
+
 const ArtHangingCalculator = () => {
   const [units, setUnits] = useState('cm');
   const [targetCentroid, setTargetCentroid] = useState(152.4); // 60" = 152.4 cm
@@ -46,9 +59,9 @@ const ArtHangingCalculator = () => {
       height: 0,
       mountingType: 'wire',           // 'wire' | 'dring'
       wireOffset: 0,                  // top -> wire when taut
-      mountingVerticalOffset: 0,      // top -> D-ring
-      mountingHorizontalOffset: 0,    // side -> D-ring (symmetric)
-      hangerOffset: 2.54,             // nail above wire rest point (default 1" => 2.54cm)
+      mountingVerticalOffset: 0,      // top -> D-ring hole/eye
+      mountingHorizontalOffset: 0,    // side -> D-ring (assumed symmetric)
+      hangerOffset: 2.54,             // nail sits this much above wire rest point (default 1" => 2.54 cm)
     },
   ]);
 
@@ -59,11 +72,11 @@ const ArtHangingCalculator = () => {
     verticalGap: 10,
   });
 
-  const unitLabel = units === 'cm' ? 'cm' : 'in';
+  const unitLabel = (units === 'cm' ? 'cm' : 'in');
 
   const toggleUnits = () => {
-    const newUnits = units === 'inches' ? 'cm' : 'inches';
-    const factor = newUnits === 'cm' ? 2.54 : 1 / 2.54;
+    const newUnits = (units === 'inches' ? 'cm' : 'inches');
+    const factor = (newUnits === 'cm' ? 2.54 : 1 / 2.54);
 
     setUnits(newUnits);
     setTargetCentroid(prev => +(prev * factor).toFixed(1));
@@ -108,13 +121,22 @@ const ArtHangingCalculator = () => {
     }
   };
 
+  // FIX: only coerce numeric fields; keep strings like mountingType as strings
   const updateArtwork = (id, field, value) => {
-    setArtworks(arts =>
-      arts.map(art =>
-        art.id === id
-          ? { ...art, [field]: value === '' ? 0 : (parseFloat(value) || 0) }
-          : art
-      )
+    setArtworks(prev =>
+      prev.map(art => {
+        if (art.id !== id) return art;
+        if (!NUM_FIELDS.includes && NUM_FIELDS.has(field)) {
+          const num = (value === '' ? 0 : Number(value));
+          return { ...art, [field]: Number.isFinite(num) ? num : 0 };
+        }
+        if (NUM_FIELDS.has && NUM_FIELDS.has(field)) {
+          const num = (value === '' ? 0 : Number(value));
+          return { ...art, [field]: Number.isFinite(num) ? num : 0 };
+        }
+        // string or other non-numeric fields (e.g., mountingType)
+        return { ...art, [field]: value };
+      })
     );
   };
 
@@ -131,36 +153,40 @@ const ArtHangingCalculator = () => {
     if (configuration === 'single') {
       const art = artworks[0] || {};
       const centroid = targetCentroid;
+
       if (art.mountingType === 'dring') {
+        // two nails at symmetric offsets from left/right edges
         const nailH = dringNailHeight(art, centroid);
         const totalW = art.width || 0;
         const startX = groupStart(totalW);
-        const leftX = startX + (art.mountingHorizontalOffset || 0);
+        const leftX  = startX + (art.mountingHorizontalOffset || 0);
         const rightX = startX + totalW - (art.mountingHorizontalOffset || 0);
+
         return [{
           artwork: 1,
           isDRing: true,
           nailHeight: nailH.toFixed(2),
-          centroid: centroid.toFixed(2),
-          horizontalDistance: leftX.toFixed(2),
-          horizontalDistance2: rightX.toFixed(2),
+          centroid: centroid.toString(),
+          horizontalDistance: leftX.toFixed(2),     // distance from LEFT wall edge
+          horizontalDistance2: rightX.toFixed(2),   // distance from LEFT wall edge
           horizontalFromEdge: 'left',
-          equation: `Nail = ${centroid.toFixed(2)} + ${(art.height || 0 / 2).toFixed(2)} - ${(art.mountingVerticalOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
-          horizontalEquation: `Left=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; Right=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2+${totalW.toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
-        }];
-      } else {
-        const nailH = wireNailHeight(art, centroid);
-        const horizontalCenter = wallWidth / 2;
-        return [{
-          artwork: 1,
-          nailHeight: nailH.toFixed(2),
-          centroid: centroid.toFixed(2),
-          horizontalDistance: horizontalCenter.toFixed(2),
-          horizontalFromEdge: 'center',
-          equation: `Nail = ${centroid.toFixed(2)} + ${(art.height || 0 / 2).toFixed(2)} - ${(art.wireOffset || 0).toFixed(2)} + ${(art.hangerOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
-          horizontalEquation: `Horizontal = ${wallWidth.toFixed(2)} / 2 = ${horizontalCenter.toFixed(2)}${unitLabel}`,
+          equation: `Nail = ${centroid.toFixed(2)} + ${( (art.height || 0) / 2 ).toFixed(2)} - ${(art.mountingVerticalOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
+          horizontalEquation: `Left = (${wallWidth.toFixed(2)} - ${totalW.toFixed(2)}) / 2 + ${(art.mountingHorizontalOffset || 0).toFixed(2)} = ${leftX.toFixed(2)}${unitLabel}; `
+            + `Right = (${wallWidth.toFixed(2)} - ${totalW.toFixed(2)}) / 2 + ${totalW.toFixed(2)} - ${(art.mountingHorizontalOffset || 0).toFixed(2)} = ${rightX.toFixed(2)}${unitLabel}`,
         }];
       }
+
+      const nailH = wireNailHeight(art, centroid);
+      const horizontalCenter = wallWidth / 2;
+      return [{
+        artwork: 1,
+        nailHeight: nailH.toFixed(2),
+        centroid: centroid.toString(),
+        horizontalDistance: horizontalCenter.toFixed(2),
+        horizontalFromEdge: 'center',
+        equation: `Nail = ${centroid.toFixed(2)} + ${( (art.height || 0) / 2 ).toFixed(2)} - ${(art.wireOffset || 0).toFixed(2)} + ${(art.hangerOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
+        horizontalEquation: `Horizontal = ${wallWidth.toFixed(2)} / 2 = ${horizontalCenter.toFixed(2)}${unitLabel}`,
+      }];
     }
 
     // CUSTOM GRID
@@ -191,6 +217,7 @@ const ArtHangingCalculator = () => {
       let artIndex = 0;
       for (let row = 0; row < rows; row++) {
         const heightAbove = rowHeights.slice(0, row).reduce((s, h) => s + h, 0) + row * (verticalGap || 0);
+
         for (let col = 0; col < cols; col++) {
           if (artIndex >= artworks.length) break;
           const art = artworks[artIndex];
@@ -199,14 +226,15 @@ const ArtHangingCalculator = () => {
           const artCentroid = heightAbove + (art.height || 0) / 2 + offset;
 
           // Horizontal left for this column
-          const widthToLeft = colWidths.slice(0, col).reduce((s, w) => s + w, 0) + col * (horizontalGap || 0);
+          const widthToLeft = colWidths.slice(0, col).reduce((s, w) => s + w, 0) + col * (verticalGap ? 0 : 0) + col * (horizontalGap || 0);
           const artLeftX = gridStartX + widthToLeft;
           const artCenterX = artLeftX + (art.width || 0) / 2;
 
           if (art.mountingType === 'dring') {
             const nailH = dringNailHeight(art, artCentroid);
-            const leftX = artLeftX + (art.mountingHorizontalOffset || 0);
+            const leftX  = artLeftX + (art.mountingHorizontalOffset || 0);
             const rightX = artLeftX + (art.width || 0) - (art.mountingHorizontalOffset || 0);
+
             results.push({
               artwork: artIndex + 1,
               position: `Row ${row + 1}, Col ${col + 1}`,
@@ -216,8 +244,11 @@ const ArtHangingCalculator = () => {
               horizontalDistance: leftX.toFixed(2),
               horizontalDistance2: rightX.toFixed(2),
               horizontalFromEdge: 'left',
-              equation: `GridCentroid=${gridCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.mountingVerticalOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
-              horizontalEquation: `GridStart=(${wallWidth.toFixed(2)}-${totalWidth.toFixed(2)})/2=${gridStartX.toFixed(2)}; Left=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; Right=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
+              equation: `GridCentroid=${gridCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; `
+                + `Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.mountingVerticalOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
+              horizontalEquation: `GridStart=(${wallWidth.toFixed(2)}-${totalWidth.toFixed(2)})/2=${gridStartX.toFixed(2)}; `
+                + `Left=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; `
+                + `Right=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
             });
           } else {
             const nailH = wireNailHeight(art, artCentroid);
@@ -228,8 +259,10 @@ const ArtHangingCalculator = () => {
               centroid: artCentroid.toFixed(2),
               horizontalDistance: artCenterX.toFixed(2),
               horizontalFromEdge: 'left',
-              equation: `GridCentroid=${gridCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.wireOffset || 0).toFixed(2)}+${(art.hangerOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
-              horizontalEquation: `GridStart=(${wallWidth.toFixed(2)}-${totalWidth.toFixed(2)})/2=${gridStartX.toFixed(2)}; Center=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${((art.width || 0)/2).toFixed(2)}=${artCenterX.toFixed(2)}${unitLabel}`,
+              equation: `GridCentroid=${gridCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; `
+                + `Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.wireOffset || 0).toFixed(2)}+${(art.hangerOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
+              horizontalEquation: `GridStart=(${wallWidth.toFixed(2)}-${totalWidth.toFixed(2)})/2=${gridStartX.toFixed(2)}; `
+                + `Center=${gridStartX.toFixed(2)}+${widthToLeft.toFixed(2)}+${((art.width || 0)/2).toFixed(2)}=${artCenterX.toFixed(2)}${unitLabel}`,
             });
           }
 
@@ -254,9 +287,10 @@ const ArtHangingCalculator = () => {
 
         if (art.mountingType === 'dring') {
           const artLeftX = groupStart(art.width || 0);
-          const leftX = artLeftX + (art.mountingHorizontalOffset || 0);
+          const leftX  = artLeftX + (art.mountingHorizontalOffset || 0);
           const rightX = artLeftX + (art.width || 0) - (art.mountingHorizontalOffset || 0);
           const nailH = dringNailHeight(art, artCentroid);
+
           return {
             artwork: i + 1,
             isDRing: true,
@@ -265,21 +299,24 @@ const ArtHangingCalculator = () => {
             horizontalDistance: leftX.toFixed(2),
             horizontalDistance2: rightX.toFixed(2),
             horizontalFromEdge: 'left',
-            equation: `GroupCentroid=${groupCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.mountingVerticalOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
-            horizontalEquation: `Left=((${wallWidth.toFixed(2)}-${(art.width || 0).toFixed(2)})/2)+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; Right=((${wallWidth.toFixed(2)}-${(art.width || 0).toFixed(2)})/2)+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
-          };
-        } else {
-          const nailH = wireNailHeight(art, artCentroid);
-          return {
-            artwork: i + 1,
-            nailHeight: nailH.toFixed(2),
-            centroid: artCentroid.toFixed(2),
-            horizontalDistance: horizontalCenter.toFixed(2),
-            horizontalFromEdge: 'center',
-            equation: `GroupCentroid=${groupCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.wireOffset || 0).toFixed(2)}+${(art.hangerOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
-            horizontalEquation: `Horizontal = ${wallWidth.toFixed(2)} / 2 = ${horizontalCenter.toFixed(2)}${unitLabel}`,
+            equation: `GroupCentroid=${groupCentroid.toFixed(2)}; Offset=${offset.toFixed(2)}; `
+              + `Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.mountingVerticalOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
+            horizontalEquation: `Left=((${wallWidth.toFixed(2)}-${(art.width || 0).toFixed(2)})/2)+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; `
+              + `Right=((${*wallWidth*}.toFixed? wallWidth.toFixed(2) : wallWidth)-${(art.width || 0).toFixed(2)})/2+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
           };
         }
+
+        const nailH = wireNailHeight(art, artCentroid);
+        return {
+          artwork: i + 1,
+          nailHeight: nailH.toFixed(2),
+          centroid: artCentroid.toFixed(2),
+          horizontalDistance: horizontalCenter.toFixed(2),
+          horizontalFromEdge: 'center',
+          equation: `GroupCentroid=${groupCentroid.toFixed(2)}; Offset=${targetCentroid.toFixed(2)}-${groupCentroid.toFixed(2)}=${offset.toFixed(2)}; `
+            + `Nail=${artCentroid.toFixed(2)}+${((art.height || 0)/2).toFixed(2)}-${(art.wireOffset || 0).toFixed(2)}+${(art.hangerOffset || 0).toFixed(2)}=${nailH.toFixed(2)}${unitLabel}`,
+          horizontalEquation: `Horizontal = ${wallWidth.toFixed(2)} / 2 = ${horizontalCenter.toFixed(2)}${unitLabel}`,
+        };
       });
     }
 
@@ -295,9 +332,10 @@ const ArtHangingCalculator = () => {
       cumulative += (art.width || 0) + (i < artworks.length - 1 ? (layout.horizontalGap || 0) : 0);
 
       if (art.mountingType === 'dring') {
-        const leftX = artLeftX + (art.mountingHorizontalOffset || 0);
+        const leftX  = artLeftX + (art.mountingHorizontalOffset || 0);
         const rightX = artLeftX + (art.width || 0) - (art.mountingHorizontalOffset || 0);
         const nailH = dringNailHeight(art, targetCentroid);
+
         return {
           artwork: i + 1,
           isDRing: true,
@@ -307,20 +345,23 @@ const ArtHangingCalculator = () => {
           horizontalDistance2: rightX.toFixed(2),
           horizontalFromEdge: 'left',
           equation: `Nail = ${targetCentroid.toFixed(2)} + ${((art.height || 0)/2).toFixed(2)} - ${(art.mountingVerticalOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
-          horizontalEquation: `GroupStart=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2=${startX.toFixed(2)}; Left=${startX.toFixed(2)}+${prev.toFixed(2)}+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; Right=${startX.toFixed(2)}+${prev.toFixed(2)}+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
-        };
-      } else {
-        const nailH = wireNailHeight(art, targetCentroid);
-        return {
-          artwork: i + 1,
-          nailHeight: nailH.toFixed(2),
-          centroid: targetCentroid.toFixed(2),
-          horizontalDistance: artCenterX.toFixed(2),
-          horizontalFromEdge: 'left',
-          equation: `Nail = ${targetCentroid.toFixed(2)} + ${(art.height || 0 / 2).toFixed(2)} - ${(art.wireOffset || 0).toFixed(2)} + ${(art.hangerOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
-          horizontalEquation: `GroupStart=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2=${startX.toFixed(2)}; Center=${startX.toFixed(2)}+${prev.toFixed(2)}+${((art.width || 0)/2).toFixed(2)}=${artCenterX.toFixed(2)}${unitLabel}`,
+          horizontalEquation: `GroupStart=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2=${startX.toFixed(2)}; `
+            + `Left=${startX.toFixed(2)}+${prev.toFixed(2)}+${(art.mountingHorizontalOffset || 0).toFixed(2)}=${leftX.toFixed(2)}${unitLabel}; `
+            + `Right=${startX.toFixed(2)}+${prev.toFixed(2)}+${(art.width || 0).toFixed(2)}-${(art.mountingHorizontalOffset || 0).toFixed(2)}=${rightX.toFixed(2)}${unitLabel}`,
         };
       }
+
+      const nailH = wireNailHeight(art, targetCentroid);
+      return {
+        artwork: i + 1,
+        nailHeight: nailH.toFixed(2),
+        centroid: targetCentroid.toFixed(2),
+        horizontalDistance: artCenterX.toFixed(2),
+        horizontalFromEdge: 'left',
+        equation: `Nail = ${targetCentroid.toFixed(2)} + ${((art.height || 0)/2).toFixed(2)} - ${(art.wireOffset || 0).toFixed(2)} + ${(art.hangerOffset || 0).toFixed(2)} = ${nailH.toFixed(2)}${unitLabel}`,
+        horizontalEquation: `GroupStart=(${wallWidth.toFixed(2)}-${totalW.toFixed(2)})/2=${startX.toFixed(2)}; `
+          + `Center=${startX.toFixed(2)}+${prev.toFixed(2)}+${((art.width || 0)/2).toFixed(2)}=${artCenterX.toFixed(2)}${unitLabel}`,
+      };
     });
   };
 
@@ -330,18 +371,20 @@ const ArtHangingCalculator = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
       <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="flex items-center gap-3 mb-6">
-            <Calculator className="w-8 h-8 text-blue-600" />
+          <div className="flex items-menu gap-3 mb-6">
+            <div className="w-8 h-8 text-blue-600">
+              <Calculator className="w-8 h-8 text-blue-600" />
+            </div>
             <h1 className="text-3xl font-bold text-gray-800">Art Hanging Calculator</h1>
             <button
               onClick={toggleUnits}
-              className="ml-auto px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
+              className="ml-auto px-4 py-2 bg-blue-900 text-white rounded-lg hover:bg-blue-800 transition-colors font-medium"
             >
               {units === 'inches' ? '🇺🇸 Switch to cm' : '📏 Switch to inches'}
             </button>
           </div>
 
-          <p className="text-gray-600 mb-8">
+          <p className="text-gray-600 mb 8">
             Calculate precise nail placement for artwork with a {targetCentroid}{unitLabel} centroid height (museum standard).
           </p>
 
@@ -382,7 +425,7 @@ const ArtHangingCalculator = () => {
               Configuration Type
             </label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {['single', 'vertical', 'horizontal', 'custom'].map(type => (
+              {['single', 'vertical', 'horizontal', 'custom'].opp || ['single', 'vertical', 'horizontal', 'custom']}.map && (['single', 'vertical', 'horizontal', 'custom']).map(type => (
                 <button
                   key={type}
                   onClick={() => {
@@ -539,7 +582,7 @@ const ArtHangingCalculator = () => {
                           onChange={(e) => updateArtwork(art.id, 'wireOffset', e.target.value)}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Distance from top to wire when taut</p>
+                        <p className="text-xs text-gray-500 mt-1">Distance from top of frame to wire when taut</p>
                       </div>
                     ) : (
                       <>
@@ -551,7 +594,7 @@ const ArtHangingCalculator = () => {
                             onChange={(e) => updateArtwork(art.id, 'mountingVerticalOffset', e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
                           />
-                          <p className="text-xs text-gray-500 mt-1">Distance from top edge to mount</p>
+                          <p className="text-xs text-gray-500 mt-1">Distance from top edge to D-ring screw hole/eye</p>
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-gray-600 mb-1">Horizontal Offset ({unitLabel})</label>
@@ -561,7 +604,7 @@ const ArtHangingCalculator = () => {
                             onChange={(e) => updateArtwork(art.id, 'mountingHorizontalOffset', e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
                           />
-                          <p className="text-xs text-gray-500 mt-1">Distance from side edge to mount</p>
+                          <p className="text-xs text-gray-500 mt-1">Distance from side edge to D-ring center</p>
                         </div>
                       </>
                     )}
@@ -573,7 +616,7 @@ const ArtHangingCalculator = () => {
                         onChange={(e) => updateArtwork(art.id, 'hangerOffset', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
                       />
-                      <p className="text-xs text-gray-500 mt-1">Distance nail is above wire rest point</p>
+                      <p className="text-xs text-gray-500 mt-1">How much higher the nail sits above the taut wire</p>
                     </div>
                   </div>
                 </div>
@@ -592,19 +635,27 @@ const ArtHangingCalculator = () => {
                       <p className="font-semibold text-lg mb-1">
                         {result.position ? result.position : `Artwork ${result.artwork}`}
                       </p>
-                      <p className="text-sm text-blue-100">Centroid: {result.centroid}{unitLabel} from floor</p>
+                      <p className="text-sm text-blue-100">
+                        Centroid: {result.centroid}{unitLabel} from floor
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <div className="bg-white/10 rounded p-3">
                         <p className="text-xs text-blue-100 mb-1">Vertical Position</p>
-                        <p className="text-2xl font-bold">{result.nailHeight}{unitLabel} from floor</p>
+                        <p className="text-2xl font-bold">
+                          {result.nailHeight}{unitLabel} from floor
+                        </p>
                       </div>
                       <div className="bg-white/10 rounded p-3">
                         <p className="text-xs text-blue-100 mb-1">Horizontal Position</p>
                         {result.isDRing ? (
                           <div>
-                            <p className="text-lg font-bold">Left: {result.horizontalDistance}{unitLabel} from left edge</p>
-                            <p className="text-lg font-bold mt-1">Right: {result.horizontalDistance2}{unitLabel} from left edge</p>
+                            <p className="text-lg font-bold">
+                              Left: {result.horizontalDistance}{unitLabel} from left edge
+                            </p>
+                            <p className="text-lg font-bold mt-1">
+                              Right: {result.horizontalDistance2}{unitLabel} from left edge
+                            </p>
                           </div>
                         ) : (
                           <p className="text-2xl font-bold">
@@ -614,13 +665,14 @@ const ArtHangingCalculator = () => {
                       </div>
                     </div>
                   </div>
+
                   {result.equation && (
                     <div className="mt-4 pt-4 border-t border-white/20">
-                      <p className="text-xs font-semibold text-blue-100 mb-2">Vertical Calculation:</p>
+                      <p className="text-xs text-blue-100 font-semibold mb-2">Vertical Calculation:</p>
                       <p className="text-xs font-mono text-white bg-black/20 rounded p-2 break-all">
                         {result.equation}
                       </p>
-                      <p className="text-xs font-semibold text-blue-100 mb-2 mt-3">Horizontal Calculation:</p>
+                      <p className="text-xs text-blue-100 font-semibold mb-2 mt-3">Horizontal Calculation:</p>
                       <p className="text-xs font-mono text-white bg-black/20 rounded p-2 break-all">
                         {result.horizontalEquation}
                       </p>
@@ -629,6 +681,7 @@ const ArtHangingCalculator = () => {
                 </div>
               ))}
             </div>
+
             <div className="mt-6 p-4 bg-white/10 rounded-lg">
               <p className="text-sm">
                 <strong>How to use:</strong>{' '}
@@ -638,7 +691,7 @@ const ArtHangingCalculator = () => {
                       results[0]?.horizontalFromEdge === 'center'
                         ? 'to the center of your wall'
                         : 'from the left edge of your wall'
-                    } and mark the horizontal distance. Then measure up from the floor to mark the vertical nail height. The wire offset is the distance from the top of the frame to where the wire sits when pulled taut; hanger offset is how much higher the nail sits above that wire point.`}
+                    } and mark the horizontal distance. Then measure up from the floor to mark the vertical nail height. The wire offset is the distance from the top of the frame to where the wire sits when taut; hanger offset is how much higher the nail sits above that wire point.`}
               </p>
             </div>
           </div>
@@ -648,5 +701,5 @@ const ArtHangingCalculator = () => {
   );
 };
 
-/* Mount (React 18 still supports render on UMD; safest for this setup) */
+/* Mount (React 18 UMD still supports render; fine for this setup) */
 ReactDOM.render(<ArtHangingCalculator />, document.getElementById('root'));
